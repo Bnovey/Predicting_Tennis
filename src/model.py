@@ -35,7 +35,7 @@ class FixedPrefixDataset(Dataset):
         match_idx = idx // self.prefixes_per_match
         seq = self.match_tensors[match_idx]
         L = seq.size(0)
-        t = random.randint(self.min_prefix, L)
+        t = random.randint(self.min_prefix, int(L*.85))
         prefix = seq[:t]
         label = self.labels[match_idx]
         return prefix, label
