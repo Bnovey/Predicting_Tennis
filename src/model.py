@@ -40,27 +40,12 @@ class FixedPrefixDataset(Dataset):
         label = self.labels[match_idx]
         return prefix, label
     
-# class AllPrefixesDataset(Dataset):
-#     def __init__(self, match_tensors, labels, min_prefix=5):
-#         """
-#         match_tensors: list of [L_i, feat_dim] tensors
-#         labels:        list or 1D tensor of 0/1
-#         min_prefix:    smallest prefix length to use
-#         """
-#         self.samples = []
-#         for match_idx, seq in enumerate(match_tensors):
-#             L = seq.size(0)
-#             for t in range(min_prefix, L + 1):
-#                 prefix = seq[:t]
-#                 label = labels[match_idx]
-#                 self.samples.append((prefix, label))
+    
+    def get_point_sequences(self):
+        return self.match_tensors
 
-#     def __len__(self):
-#         return len(self.samples)
-
-#     def __getitem__(self, idx):
-#         return self.samples[idx]
-
+    
+    
 # Collate function remains the same:
 def collate_fn(batch):
     sequences, labels = zip(*batch)         # list of [Li×F] tensors
@@ -103,32 +88,23 @@ class MatchOutcomeTransformer(nn.Module):
             nn.Linear(d_model, 1),
         )
 
+    def encode(self, x, padding_mask):
+        # returns the pooled [B, D] embedding
+        x = self.input_proj(x)
+        x = self.pos_enc(x)
+        x = x.transpose(0, 1)
+        x = self.transformer(x, src_key_padding_mask=padding_mask)
+        x = x.transpose(0, 1)
+        valid = (~padding_mask).unsqueeze(-1).to(x.dtype)
+        summed = (x * valid).sum(dim=1)
+        counts = valid.sum(dim=1).clamp(min=1)
+        pooled = summed / counts
+        return pooled  # [B, D]
+
     def forward(self, x, padding_mask):
-        x = self.input_proj(x)       # → [B, L, D]
-        x = self.pos_enc(x)          # → [B, L, D]
-        x = x.transpose(0, 1)
-
-       
-        x = self.transformer(
-            x,
-            src_key_padding_mask=padding_mask
-        )                             # → [L, B, D]
-
-        # 4) back to [B, L, D]
-        x = x.transpose(0, 1)
-
-        # 5) masked mean‐pool over time
-        #    - valid mask is 1 for real points, 0 for pads
-        valid = (~padding_mask).unsqueeze(-1).to(x.dtype)  # → [B, L, 1]
-        summed = (x * valid).sum(dim=1)                   # → [B, D]
-        counts = valid.sum(dim=1).clamp(min=1)             # → [B, 1]
-        pooled = summed / counts                          # → [B, D]
-
-        # 6) classifier → logit per match
-        #    (if you still have a Sigmoid in your classifier, this returns a probability;
-        #     otherwise drop Sigmoid and use BCEWithLogitsLoss)
-        out = self.classifier(pooled).squeeze(-1)         # → [B]
+        pooled = self.encode(x, padding_mask)  # [B, D]
+        out = self.classifier(pooled).squeeze(-1)  # logits [B]
         return out
-            
+    
 
 
